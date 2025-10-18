@@ -1,14 +1,12 @@
 import cv2
 import numpy as np
-import matplotlib
-from PIL import Image
-import piexif
 import os
+import subprocess
 
 # ===== KONFIGURASI PATH =====
 nir_folder = "/home/adedi/Documents/Tugas_Akhir/Data/Drone Mentah/DJI_202409071655_007_sawah1/nir_data"
 red_folder = "/home/adedi/Documents/Tugas_Akhir/Data/Drone Mentah/DJI_202409071655_007_sawah1/red_data"
-output_folder = "./ndvi_results"
+output_folder = "./ndvi_grayscale"
 
 # ===== BUAT FOLDER OUTPUT =====
 if not os.path.exists(output_folder):
@@ -34,11 +32,10 @@ if len(red_files) == 0:
     exit(1)
 
 # ===== PROSES KONVERSI =====
-print(f"\n=== Starting NDVI conversion for {len(nir_files)} pairs ===\n")
+print(f"\n=== Starting NDVI conversion (Grayscale) for {len(nir_files)} pairs ===\n")
 
 success_count = 0
 error_count = 0
-colormap = matplotlib.colormaps['RdYlGn']
 
 for i, nir_file in enumerate(nir_files, 1):
     # Extract base name untuk matching
@@ -54,7 +51,7 @@ for i, nir_file in enumerate(nir_files, 1):
     # Path lengkap
     nir_path = os.path.join(nir_folder, nir_file)
     red_path = os.path.join(red_folder, red_file)
-    output_path = os.path.join(output_folder, f'{base_name}_NDVI.tif')
+    output_path = os.path.join(output_folder, f'{base_name}_NDVI.TIF')
 
     try:
         # Baca gambar
@@ -70,30 +67,26 @@ for i, nir_file in enumerate(nir_files, 1):
         nir = nir_image.astype(float)
         red = red_image.astype(float)
 
-        # Hitung NDVI
+        # Hitung NDVI (range: -1 hingga +1)
         ndvi = (nir - red) / (nir + red + 1e-10)
 
-        # Normalisasi ke 0-255
-        ndvi_normalized = cv2.normalize(ndvi, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        # Simpan sebagai float32 TIFF (single band, grayscale)
+        # NDVI disimpan dalam range aslinya (-1 to +1)
+        ndvi_float32 = ndvi.astype(np.float32)
+        cv2.imwrite(output_path, ndvi_float32)
 
-        # Apply colormap RdYlGn
-        ndvi_colored = (colormap(ndvi_normalized / 255.0)[:, :, :3] * 255).astype(np.uint8)
-
-        # Convert RGB to BGR
-        ndvi_bgr = cv2.cvtColor(ndvi_colored, cv2.COLOR_RGB2BGR)
-
-        # Simpan gambar sebagai TIFF
-        cv2.imwrite(output_path, ndvi_bgr)
-
-        # Copy EXIF dari NIR menggunakan exiftool
+        # Copy ALL metadata dari NIR menggunakan exiftool
         try:
-            import subprocess
-            subprocess.run(['exiftool', '-TagsFromFile', nir_path, '-all:all', '-overwrite_original', output_path],
-                          capture_output=True, check=False)
-        except:
-            pass  # Skip jika exiftool error, tetap lanjut
+            result = subprocess.run(
+                ['exiftool', '-TagsFromFile', nir_path, '-all:all', '-overwrite_original', output_path],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+        except Exception as e:
+            print(f"  ⚠ Warning: Could not copy metadata - {e}")
 
-        print(f"[{i}/{len(nir_files)}] ✓ {base_name}_NDVI.tif (NDVI: {ndvi.min():.3f} ~ {ndvi.max():.3f})")
+        print(f"[{i}/{len(nir_files)}] ✓ {base_name}_NDVI.TIF (NDVI: {ndvi.min():.3f} ~ {ndvi.max():.3f})")
         success_count += 1
 
     except Exception as e:
@@ -110,11 +103,13 @@ print(f"Output folder: {output_folder}")
 print("="*60)
 
 if success_count > 0:
-    print(f"\n✓ {success_count} NDVI images successfully created!")
+    print(f"\n✓ {success_count} NDVI grayscale images successfully created!")
     print(f"   Location: {os.path.abspath(output_folder)}")
-    print("\nColor interpretation:")
-    print("  🔴 Red    = Low vegetation (unhealthy/bare soil)")
-    print("  🟡 Yellow = Moderate vegetation")
-    print("  🟢 Green  = High vegetation (healthy plants)")
+    print("\nFile format:")
+    print("  • Single-band TIFF (Float32)")
+    print("  • NDVI range: -1.0 to +1.0")
+    print("  • Grayscale (no colormap)")
+    print("  • All metadata preserved from NIR")
+    print("\n📤 These files are ready for DJI SmartFarm upload!")
 else:
     print("\n✗ No NDVI images created. Check your input folders and file names.")

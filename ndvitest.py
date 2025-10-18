@@ -155,7 +155,7 @@ def stitch_multiple_images(image_folder, output_file, mode=cv2.Stitcher_SCANS, b
         print(f"Processing batch {i // batch_size + 1}: {len(batch_images)} images")
 
         try:
-            status, stitched_image = stitcher.stitch(batch_images)
+            status, stitched_image =    stitcher.stitch(batch_images)
 
             if status == cv2.Stitcher_OK:
                 # Menyimpan hasil stitching batch
@@ -197,8 +197,8 @@ def main():
     calculate_ndvi(compressed_nir_red_folder, compressed_nir_red_folder, ndvi_folder)
     
     # Perform stitching on compressed RGB and NDVI images
-    stitch_multiple_images(compressed_rgb_folder, stitching_rgb_output_file, mode=cv2.Stitcher_SCANS, batch_size=1000, scale_percent=30)  # batch_size besar = semua gambar jadi 1
-    stitch_multiple_images(ndvi_folder, stitching_ndvi_output_file, mode=cv2.Stitcher_SCANS, batch_size=1000, scale_percent=30)
+    stitch_multiple_images(compressed_rgb_folder, stitching_rgb_output_file, mode=cv2.Stitcher_SCANS, batch_size=20, scale_percent=30)
+    stitch_multiple_images(ndvi_folder, stitching_ndvi_output_file, mode=cv2.Stitcher_SCANS, batch_size=20, scale_percent=30)
 
 if __name__ == "__main__":
     main()
