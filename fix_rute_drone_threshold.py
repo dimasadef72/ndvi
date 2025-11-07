@@ -232,18 +232,18 @@ def pixels_to_polygons_merged(input_tif, output_shp, threshold_min=0.0, threshol
         # print(f"  Tolerance: 2.0 meter")
 
         # Remove holes/inner rings dari polygon
-        print(f"\n[STEP 3.6] Remove holes dari polygon...")
-        from shapely.geometry import Polygon as ShapelyPolygon
+        # print(f"\n[STEP 3.6] Remove holes dari polygon...")
+        # from shapely.geometry import Polygon as ShapelyPolygon
 
-        def remove_holes(geom):
-            if geom.geom_type == 'Polygon':
-                return ShapelyPolygon(geom.exterior.coords)
-            elif geom.geom_type == 'MultiPolygon':
-                return type(geom)([ShapelyPolygon(p.exterior.coords) for p in geom.geoms])
-            return geom
+        # def remove_holes(geom):
+        #     if geom.geom_type == 'Polygon':
+        #         return ShapelyPolygon(geom.exterior.coords)
+        #     elif geom.geom_type == 'MultiPolygon':
+        #         return type(geom)([ShapelyPolygon(p.exterior.coords) for p in geom.geoms])
+        #     return geom
 
-        merged_gdf['geometry'] = merged_gdf.geometry.apply(remove_holes)
-        print(f"  Holes removed from all polygons")
+        # merged_gdf['geometry'] = merged_gdf.geometry.apply(remove_holes)
+        # print(f"  Holes removed from all polygons")
 
         # Konversi balik ke CRS asli
         if original_crs.is_geographic:
@@ -288,6 +288,197 @@ def pixels_to_polygons_merged(input_tif, output_shp, threshold_min=0.0, threshol
 
         return merged_gdf
 
+def generate_drone_route(shapefile_path, output_route_shp, line_spacing=2.0):
+    """
+    Generate waypoints rute drone dengan pola zigzag di dalam polygon
+    dan garis penghubung antar polygon.
+
+    Parameters:
+    - shapefile_path: path ke shapefile polygon spray zones
+    - output_route_shp: path output untuk shapefile rute drone
+    - line_spacing: jarak antar jalur zigzag dalam meter (default: 2m)
+    """
+    from shapely.geometry import LineString, Point, MultiLineString
+
+    print(f"\n{'='*80}")
+    print(f"GENERATE DRONE ROUTE")
+    print(f"{'='*80}\n")
+    print(f"Input shapefile: {shapefile_path}")
+    print(f"Output route: {output_route_shp}")
+    print(f"Line spacing: {line_spacing}m\n")
+
+    # Baca shapefile polygon
+    gdf = gpd.read_file(shapefile_path)
+
+    # Fix invalid geometries
+    gdf['geometry'] = gdf.geometry.buffer(0)
+
+    # Konversi ke UTM jika belum
+    original_crs = gdf.crs
+    if gdf.crs.is_geographic:
+        centroid = gdf.union_all().centroid
+        lon = centroid.x
+        lat = centroid.y
+        utm_zone = int((lon + 180) / 6) + 1
+        utm_epsg = 32600 + utm_zone if lat >= 0 else 32700 + utm_zone
+        gdf = gdf.to_crs(epsg=utm_epsg)
+        print(f"Konversi ke UTM EPSG:{utm_epsg}")
+
+    all_routes = []
+    endpoints = []  # Untuk menyimpan titik awal dan akhir setiap polygon
+
+    print(f"\n[STEP 1] Generate zigzag pattern untuk {len(gdf)} polygon...")
+
+    for idx, row in gdf.iterrows():
+        poly = row.geometry
+        bounds = poly.bounds  # (minx, miny, maxx, maxy)
+
+        # Tentukan arah zigzag (horizontal)
+        minx, miny, maxx, maxy = bounds
+        width = maxx - minx
+        height = maxy - miny
+
+        # Generate garis horizontal
+        lines = []
+        y = miny
+        direction = 1  # 1 = kiri ke kanan, -1 = kanan ke kiri
+
+        while y <= maxy:
+            if direction == 1:
+                line = LineString([(minx, y), (maxx, y)])
+            else:
+                line = LineString([(maxx, y), (minx, y)])
+
+            # Potong garis dengan polygon
+            clipped = line.intersection(poly)
+
+            if not clipped.is_empty:
+                if clipped.geom_type == 'LineString':
+                    lines.append(clipped)
+                elif clipped.geom_type == 'MultiLineString':
+                    # Ambil segmen terpanjang jika ada multiple
+                    longest = max(clipped.geoms, key=lambda x: x.length)
+                    lines.append(longest)
+
+            y += line_spacing
+            direction *= -1  # Balik arah
+
+        # Gabungkan semua garis zigzag dalam polygon ini
+        if lines:
+            # Hubungkan garis-garis menjadi satu rute kontinyu
+            route_coords = []
+            for i, line in enumerate(lines):
+                coords = list(line.coords)
+                if i == 0:
+                    route_coords.extend(coords)
+                else:
+                    # Hubungkan ujung garis sebelumnya ke awal garis ini
+                    route_coords.append(coords[0])  # Garis vertikal penghubung
+                    route_coords.extend(coords)
+
+            route = LineString(route_coords)
+            all_routes.append(route)
+
+            # Simpan endpoint untuk connecting antar polygon
+            start_point = Point(route_coords[0])
+            end_point = Point(route_coords[-1])
+            endpoints.append({
+                'id': idx,
+                'start': start_point,
+                'end': end_point,
+                'route': route
+            })
+
+    print(f"  Total route segments: {len(all_routes)}")
+
+    # [STEP 2] Hubungkan antar polygon dengan nearest neighbor
+    print(f"\n[STEP 2] Hubungkan antar polygon (nearest neighbor)...")
+
+    if len(endpoints) > 1:
+        visited = [False] * len(endpoints)
+        current_idx = 0  # Mulai dari polygon pertama
+        visited[current_idx] = True
+        ordered_routes = [endpoints[current_idx]['route']]
+        current_point = endpoints[current_idx]['end']
+
+        for _ in range(len(endpoints) - 1):
+            # Cari polygon terdekat yang belum dikunjungi
+            min_dist = float('inf')
+            next_idx = -1
+            connect_to_start = True
+
+            for i, ep in enumerate(endpoints):
+                if visited[i]:
+                    continue
+
+                # Cek jarak ke start dan end point
+                dist_to_start = current_point.distance(ep['start'])
+                dist_to_end = current_point.distance(ep['end'])
+
+                if dist_to_start < min_dist:
+                    min_dist = dist_to_start
+                    next_idx = i
+                    connect_to_start = True
+
+                if dist_to_end < min_dist:
+                    min_dist = dist_to_end
+                    next_idx = i
+                    connect_to_start = False
+
+            if next_idx != -1:
+                # Tambahkan garis penghubung
+                next_ep = endpoints[next_idx]
+                connection_point = next_ep['start'] if connect_to_start else next_ep['end']
+                connecting_line = LineString([current_point.coords[0], connection_point.coords[0]])
+                ordered_routes.append(connecting_line)
+
+                # Tambahkan route polygon berikutnya (reverse jika perlu)
+                next_route = next_ep['route']
+                if not connect_to_start:
+                    # Reverse route
+                    next_route = LineString(list(next_route.coords)[::-1])
+
+                ordered_routes.append(next_route)
+
+                # Update current point dan visited
+                visited[next_idx] = True
+                if connect_to_start:
+                    current_point = next_ep['end']
+                else:
+                    current_point = next_ep['start']
+
+        all_routes = ordered_routes
+
+    print(f"  Total segments (with connections): {len(all_routes)}")
+
+    # Konversi balik ke CRS asli
+    if original_crs.is_geographic:
+        # Buat GeoDataFrame sementara untuk konversi
+        temp_gdf = gpd.GeoDataFrame({'geometry': all_routes}, crs=gdf.crs)
+        temp_gdf = temp_gdf.to_crs(original_crs)
+        all_routes = list(temp_gdf.geometry)
+
+    # Simpan sebagai shapefile
+    print(f"\n[STEP 3] Simpan route ke shapefile...")
+    route_gdf = gpd.GeoDataFrame({
+        'segment_id': range(len(all_routes)),
+        'geometry': all_routes
+    }, crs=original_crs)
+
+    route_gdf.to_file(output_route_shp)
+
+    # Hitung total panjang rute
+    total_length = sum([r.length for r in all_routes])
+
+    print(f"\n{'='*80}")
+    print(f"HASIL:")
+    print(f"  Total segments: {len(all_routes)}")
+    print(f"  Total panjang rute: {total_length:.2f} meter")
+    print(f"  Output: {output_route_shp}")
+    print(f"{'='*80}\n")
+
+    return route_gdf
+
 if __name__ == "__main__":
     # Contoh penggunaan
     input_file = "/home/adedi/Documents/Tugas_Akhir/Data/Jember/Data/rute_its_clipped_fixed_geser.tif"
@@ -302,4 +493,8 @@ if __name__ == "__main__":
 
     # Step 2: Konversi ke polygon dan merge
     pixels_to_polygons_merged(input_file, output_spray_zones_shp, merge_distance=0.5)
+
+    # Step 3: Generate rute drone
+    output_drone_route_shp = "/home/adedi/Documents/Tugas_Akhir/Data/Jember/Rute Drone/rute_its_drone_route.shp"
+    generate_drone_route(output_spray_zones_shp, output_drone_route_shp, line_spacing=2.0)
 
