@@ -27,13 +27,14 @@ def convert_ndvi_grayscale_to_color(file_path):
     print(f"Min value: {ndvi.min():.6f}")
     print(f"Max value: {ndvi.max():.6f}")
 
-    # Normalize NDVI ke 0-255 (sama seperti batch_convert_ndvi.py)
-    # NORM_MINMAX: ambil min dan max dari image, stretch ke 0-255
-    ndvi_normalized = cv2.normalize(ndvi, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    # Map NDVI dari range -1 sampai 1 ke range 0.0-1.0 untuk colormap
+    # -1 -> 0.0 (merah), 0 -> 0.5 (kuning), 1 -> 1.0 (hijau)
+    ndvi_scaled = (ndvi + 1.0) / 2.0
+    ndvi_scaled = np.clip(ndvi_scaled, 0, 1)
 
-    # Apply colormap RdYlGn (sama seperti batch_convert_ndvi.py)
+    # Apply colormap RdYlGn
     colormap = matplotlib.colormaps['RdYlGn']
-    ndvi_colored = (colormap(ndvi_normalized / 255.0)[:, :, :3] * 255).astype(np.uint8)
+    ndvi_colored = (colormap(ndvi_scaled)[:, :, :3] * 255).astype(np.uint8)
 
     # Convert RGB to BGR untuk OpenCV
     ndvi_colored_bgr = cv2.cvtColor(ndvi_colored, cv2.COLOR_RGB2BGR)
@@ -50,7 +51,7 @@ def convert_ndvi_grayscale_to_color(file_path):
 
 if __name__ == "__main__":
     # Default file untuk testing
-    default_file = "/home/adedi/Downloads/NDVI.tif"
+    default_file = "/home/adedi/Downloads/NDVI (1).tif"
 
     if len(sys.argv) > 1:
         file_path = sys.argv[1]

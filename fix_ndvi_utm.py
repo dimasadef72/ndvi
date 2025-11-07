@@ -51,6 +51,7 @@ def apply_custom_ndvi_colormap_utm(input_tif, output_png, output_tif, output_jpg
             print(f"\n🔄 Converting WGS 84 → {target_crs}...")
 
             # Hitung transformasi baru
+            # convert wgs 84 to utm
             transform, width, height = calculate_default_transform(
                 src_original.crs, target_crs,
                 src_original.width, src_original.height,
@@ -376,9 +377,9 @@ if __name__ == "__main__":
     print("\n" + "="*80 + "\n")
 
     # File input bisa WGS 84 atau UTM, script akan handle otomatis!
-    input_file = "/home/adedi/Downloads/ndvi_qgis.tif"
-    output_png_file = "/home/adedi/Downloads/ndvi_utm.png"
-    output_tif_file = "/home/adedi/Downloads/ndvi_utm_color.tif"
-    output_jpg_file = "/home/adedi/Downloads/ndvi_utm_visualization.jpg"
+    input_file = "/home/adedi/Documents/Tugas_Akhir/Data/Jember/Data/sawah3_clipped.tif"
+    output_png_file = "/home/adedi/Documents/Tugas_Akhir/Data/Jember/Clipped/sawah3_clipped.png"
+    output_tif_file = "/home/adedi/Documents/Tugas_Akhir/Data/Jember/Clipped/sawah3_clipped.tif"
+    output_jpg_file = "/home/adedi/Documents/Tugas_Akhir/Data/Jember/Clipped/visual_sawah3_clipped.jpg"
 
     apply_custom_ndvi_colormap_utm(input_file, output_png_file, output_tif_file, output_jpg_file)
